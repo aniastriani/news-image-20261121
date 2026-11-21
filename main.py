@@ -1,81 +1,567 @@
-#!/usr/bin/env python3
 """The World in One Image - Saturday 21 November 2026.
 
-A newspaper front page that sums up the day's world news in a single
-picture. Pure Python 3.13 standard library only: a hand-drawn 5 by 7
-pixel font, small vector drawings for each story, and a PNG writer
-built by hand (zlib compression, CRCs from binascii). No network, no
-clock, no random numbers, no files read at run time, so every run
-writes exactly the same bytes.
-
-Run it with:
-    python3 main.py
-The picture goes to /output/entry.png, or to $MAKEFUN_OUTPUT_DIR
-when that variable is set.
+A newspaper front page drawn entirely in code: a hand-built 5x7 pixel
+font, a tiny RGB canvas, and a from-scratch PNG writer. Pure Python
+standard library, no network, no clock, no randomness, no files read
+at run time. The output is a deterministic 1024x1024 PNG.
 """
 
 import os
 import struct
 import zlib
-from binascii import crc32
 
-# ------------------------------------------------------------------ page
+WIDTH = 1024
+HEIGHT = 1024
 
-W = 1024
-H = 1024
+PAPER = (250, 246, 236)
+INK = (22, 22, 22)
+PANEL = (255, 255, 255)
+RULE = (30, 30, 30)
+RED = (158, 28, 28)
 
-NEWSprint = (247, 243, 234)   # warm paper
-CARD = (255, 253, 246)        # lighter panel fill
-INK = (26, 26, 26)            # near-black
-FAINT = (110, 106, 96)        # secondary ink
-CRIMSON = (172, 38, 28)       # war and justice kickers
-DEEPBLUE = (28, 64, 116)      # diplomacy kicker
-SEAGREEN = (16, 104, 100)     # climate and Europe kickers
-EMBER = (150, 74, 22)         # energy kicker
-LEAF = (30, 104, 64)          # climate accent
-OCHRE = (178, 134, 30)        # chart and flag accents
-PALE = (120, 170, 205)        # globe sea
-SNOW = (255, 255, 255)
+# ---------------------------------------------------------------------------
+# Hand-drawn 5x7 bitmap font. Each glyph is seven rows of five cells;
+# "#" is ink, "." is empty. Drawn by hand for this page.
+# ---------------------------------------------------------------------------
 
+FONT = {
+    "A": (
+        ".###.",
+        "#...#",
+        "#...#",
+        "#####",
+        "#...#",
+        "#...#",
+        "#...#",
+    ),
+    "B": (
+        "####.",
+        "#...#",
+        "#...#",
+        "####.",
+        "#...#",
+        "#...#",
+        "####.",
+    ),
+    "C": (
+        ".####",
+        "#....",
+        "#....",
+        "#....",
+        "#....",
+        "#....",
+        ".####",
+    ),
+    "D": (
+        "####.",
+        "#...#",
+        "#...#",
+        "#...#",
+        "#...#",
+        "#...#",
+        "####.",
+    ),
+    "E": (
+        "#####",
+        "#....",
+        "#....",
+        "####.",
+        "#....",
+        "#....",
+        "#####",
+    ),
+    "F": (
+        "#####",
+        "#....",
+        "#....",
+        "####.",
+        "#....",
+        "#....",
+        "#....",
+    ),
+    "G": (
+        ".####",
+        "#....",
+        "#....",
+        "#.###",
+        "#...#",
+        "#...#",
+        ".###.",
+    ),
+    "H": (
+        "#...#",
+        "#...#",
+        "#...#",
+        "#####",
+        "#...#",
+        "#...#",
+        "#...#",
+    ),
+    "I": (
+        "#####",
+        "..#..",
+        "..#..",
+        "..#..",
+        "..#..",
+        "..#..",
+        "#####",
+    ),
+    "J": (
+        "..###",
+        "...#.",
+        "...#.",
+        "...#.",
+        "...#.",
+        "#..#.",
+        ".##..",
+    ),
+    "K": (
+        "#...#",
+        "#..#.",
+        "#.#..",
+        "##...",
+        "#.#..",
+        "#..#.",
+        "#...#",
+    ),
+    "L": (
+        "#....",
+        "#....",
+        "#....",
+        "#....",
+        "#....",
+        "#....",
+        "#####",
+    ),
+    "M": (
+        "#...#",
+        "##.##",
+        "#.#.#",
+        "#.#.#",
+        "#...#",
+        "#...#",
+        "#...#",
+    ),
+    "N": (
+        "#...#",
+        "##..#",
+        "##..#",
+        "#.#.#",
+        "#..##",
+        "#..##",
+        "#...#",
+    ),
+    "O": (
+        ".###.",
+        "#...#",
+        "#...#",
+        "#...#",
+        "#...#",
+        "#...#",
+        ".###.",
+    ),
+    "P": (
+        "####.",
+        "#...#",
+        "#...#",
+        "####.",
+        "#....",
+        "#....",
+        "#....",
+    ),
+    "Q": (
+        ".###.",
+        "#...#",
+        "#...#",
+        "#...#",
+        "#.#.#",
+        "#..#.",
+        ".##.#",
+    ),
+    "R": (
+        "####.",
+        "#...#",
+        "#...#",
+        "####.",
+        "#.#..",
+        "#..#.",
+        "#...#",
+    ),
+    "S": (
+        ".####",
+        "#....",
+        "#....",
+        ".###.",
+        "....#",
+        "....#",
+        "####.",
+    ),
+    "T": (
+        "#####",
+        "..#..",
+        "..#..",
+        "..#..",
+        "..#..",
+        "..#..",
+        "..#..",
+    ),
+    "U": (
+        "#...#",
+        "#...#",
+        "#...#",
+        "#...#",
+        "#...#",
+        "#...#",
+        ".###.",
+    ),
+    "V": (
+        "#...#",
+        "#...#",
+        "#...#",
+        "#...#",
+        "#...#",
+        ".#.#.",
+        "..#..",
+    ),
+    "W": (
+        "#...#",
+        "#...#",
+        "#...#",
+        "#.#.#",
+        "#.#.#",
+        "##.##",
+        "#...#",
+    ),
+    "X": (
+        "#...#",
+        "#...#",
+        ".#.#.",
+        "..#..",
+        ".#.#.",
+        "#...#",
+        "#...#",
+    ),
+    "Y": (
+        "#...#",
+        "#...#",
+        ".#.#.",
+        "..#..",
+        "..#..",
+        "..#..",
+        "..#..",
+    ),
+    "Z": (
+        "#####",
+        "....#",
+        "...#.",
+        "..#..",
+        ".#...",
+        "#....",
+        "#####",
+    ),
+}
+
+FONT.update({
+    "0": (
+        ".###.",
+        "#..##",
+        "#.#.#",
+        "##..#",
+        "#...#",
+        "#...#",
+        ".###.",
+    ),
+    "1": (
+        "..#..",
+        ".##..",
+        "..#..",
+        "..#..",
+        "..#..",
+        "..#..",
+        ".###.",
+    ),
+    "2": (
+        ".###.",
+        "#...#",
+        "....#",
+        "...#.",
+        "..#..",
+        ".#...",
+        "#####",
+    ),
+    "3": (
+        "####.",
+        "....#",
+        "....#",
+        ".###.",
+        "....#",
+        "....#",
+        "####.",
+    ),
+    "4": (
+        "...#.",
+        "..##.",
+        ".#.#.",
+        "#..#.",
+        "#####",
+        "...#.",
+        "...#.",
+    ),
+    "5": (
+        "#####",
+        "#....",
+        "####.",
+        "....#",
+        "....#",
+        "#...#",
+        ".###.",
+    ),
+    "6": (
+        ".###.",
+        "#....",
+        "#....",
+        "####.",
+        "#...#",
+        "#...#",
+        ".###.",
+    ),
+    "7": (
+        "#####",
+        "....#",
+        "...#.",
+        "...#.",
+        "..#..",
+        "..#..",
+        "..#..",
+    ),
+    "8": (
+        ".###.",
+        "#...#",
+        "#...#",
+        ".###.",
+        "#...#",
+        "#...#",
+        ".###.",
+    ),
+    "9": (
+        ".###.",
+        "#...#",
+        "#...#",
+        ".####",
+        "....#",
+        "....#",
+        ".###.",
+    ),
+    " ": (
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+    ),
+    ".": (
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+        "..#..",
+    ),
+    ",": (
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+        "..#..",
+        "..#..",
+        ".#...",
+    ),
+    ":": (
+        ".....",
+        "..#..",
+        ".....",
+        ".....",
+        ".....",
+        "..#..",
+        ".....",
+    ),
+    ";": (
+        ".....",
+        "..#..",
+        ".....",
+        ".....",
+        ".....",
+        "..#..",
+        "..#..",
+        ".#...",
+    ),
+    "'": (
+        "..#..",
+        "..#..",
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+    ),
+    "-": (
+        ".....",
+        ".....",
+        ".....",
+        ".###.",
+        ".....",
+        ".....",
+        ".....",
+    ),
+    "!": (
+        "..#..",
+        "..#..",
+        "..#..",
+        "..#..",
+        "..#..",
+        ".....",
+        "..#..",
+    ),
+    "?": (
+        ".###.",
+        "#...#",
+        "....#",
+        "...#.",
+        "..#..",
+        ".....",
+        "..#..",
+    ),
+    "(": (
+        "...#.",
+        "..#..",
+        ".#...",
+        ".#...",
+        ".#...",
+        "..#..",
+        "...#.",
+    ),
+    ")": (
+        ".#...",
+        "..#..",
+        "...#.",
+        "...#.",
+        "...#.",
+        "..#..",
+        ".#...",
+    ),
+    "/": (
+        "....#",
+        "....#",
+        "...#.",
+        "...#.",
+        "..#..",
+        ".#...",
+        "#....",
+    ),
+    "&": (
+        ".##..",
+        "#..#.",
+        "#.#..",
+        ".#...",
+        "#.#.#",
+        "#..#.",
+        ".##.#",
+    ),
+    "%": (
+        "##..#",
+        "##.#.",
+        "...#.",
+        "..#..",
+        ".#...",
+        "#.##.",
+        "#..##",
+    ),
+    "+": (
+        ".....",
+        "..#..",
+        "..#..",
+        ".###.",
+        "..#..",
+        "..#..",
+        ".....",
+    ),
+    "=": (
+        ".....",
+        ".....",
+        ".###.",
+        ".....",
+        ".###.",
+        ".....",
+        ".....",
+    ),
+    '"': (
+        ".#.#.",
+        ".#.#.",
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+        ".....",
+    ),
+    "*": (
+        ".....",
+        ".#.#.",
+        "..#..",
+        ".###.",
+        "..#..",
+        ".#.#.",
+        ".....",
+    ),
+})
+
+
+# ---------------------------------------------------------------------------
+# Canvas: a plain RGB pixel buffer with rectangle and text drawing.
+# ---------------------------------------------------------------------------
 
 class Canvas:
-    """An RGB pixel sheet with a handful of drawing tools."""
-
     def __init__(self, width, height, colour):
-        self.w = width
-        self.h = height
-        self.buf = bytearray(colour * (width * height))
+        self.width = width
+        self.height = height
+        self.pixels = bytearray(colour * (width * height))
 
-    def dot(self, x, y, colour):
-        if 0 <= x < self.w and 0 <= y < self.h:
-            i = (y * self.w + x) * 3
-            self.buf[i], self.buf[i + 1], self.buf[i + 2] = colour
+    def set_pixel(self, x, y, colour):
+        if 0 <= x < self.width and 0 <= y < self.height:
+            i = (y * self.width + x) * 3
+            self.pixels[i] = colour[0]
+            self.pixels[i + 1] = colour[1]
+            self.pixels[i + 2] = colour[2]
 
-    def rect(self, x, y, w, h, colour):
-        xa = max(0, x)
-        ya = max(0, y)
-        xb = min(self.w, x + w)
-        yb = min(self.h, y + h)
-        for yy in range(ya, yb):
-            base = (yy * self.w + xa) * 3
-            for xx in range(xa, xb):
-                i = base + (xx - xa) * 3
-                self.buf[i], self.buf[i + 1], self.buf[i + 2] = colour
+    def fill_rect(self, x, y, w, h, colour):
+        x0 = max(0, x)
+        y0 = max(0, y)
+        x1 = min(self.width, x + w)
+        y1 = min(self.height, y + h)
+        for yy in range(y0, y1):
+            base = (yy * self.width + x0) * 3
+            for xx in range(x0, x1):
+                i = base + (xx - x0) * 3
+                self.pixels[i] = colour[0]
+                self.pixels[i + 1] = colour[1]
+                self.pixels[i + 2] = colour[2]
 
-    def frame(self, x, y, w, h, colour, thick=1):
-        self.rect(x, y, w, thick, colour)
-        self.rect(x, y + h - thick, w, thick, colour)
-        self.rect(x, y, thick, h, colour)
-        self.rect(x + w - thick, y, thick, h, colour)
+    def frame_rect(self, x, y, w, h, colour, thick=2):
+        self.fill_rect(x, y, w, thick, colour)
+        self.fill_rect(x, y + h - thick, w, thick, colour)
+        self.fill_rect(x, y, thick, h, colour)
+        self.fill_rect(x + w - thick, y, thick, h, colour)
 
-    def hrule(self, x, y, length, colour, thick=1):
-        self.rect(x, y, length, thick, colour)
+    def disc(self, cx, cy, r, colour):
+        for yy in range(cy - r, cy + r + 1):
+            for xx in range(cx - r, cx + r + 1):
+                if (xx - cx) * (xx - cx) + (yy - cy) * (yy - cy) <= r * r:
+                    self.set_pixel(xx, yy, colour)
 
-    def vrule(self, x, y, length, colour, thick=1):
-        self.rect(x, y, thick, length, colour)
-
-    def segment(self, x0, y0, x1, y1, colour, thick=1):
-        """Bresenham line, thickened by stamping small squares."""
+    def line(self, x0, y0, x1, y1, colour):
         dx = abs(x1 - x0)
         dy = -abs(y1 - y0)
         sx = 1 if x0 < x1 else -1
@@ -83,390 +569,320 @@ class Canvas:
         err = dx + dy
         x, y = x0, y0
         while True:
-            self.rect(x - thick // 2, y - thick // 2, thick, thick, colour)
+            self.set_pixel(x, y, colour)
             if x == x1 and y == y1:
                 break
-            step = 2 * err
-            if step >= dy:
+            e2 = 2 * err
+            if e2 >= dy:
                 err += dy
                 x += sx
-            if step <= dx:
+            if e2 <= dx:
                 err += dx
                 y += sy
 
-    def blob(self, cx, cy, r, colour):
-        """A filled disc, drawn one row at a time."""
-        for yy in range(cy - r, cy + r + 1):
-            dy = yy - cy
-            half = int((r * r - dy * dy) ** 0.5)
-            self.rect(cx - half, yy, half * 2 + 1, 1, colour)
 
-    def halo(self, cx, cy, r, colour, thick=2):
-        """A ring: the disc of radius r minus the disc inside it."""
-        for yy in range(cy - r, cy + r + 1):
-            dy = yy - cy
-            outer = int((r * r - dy * dy) ** 0.5)
-            inner = int(max(0, (r - thick) ** 2 - dy * dy) ** 0.5)
-            self.rect(cx - outer, yy, outer - inner, 1, colour)
-            self.rect(cx + inner + 1, yy, outer - inner, 1, colour)
+def text_width(text, scale):
+    return len(text) * 6 * scale
 
 
-# -------------------------------------------------------------- pixel type
-# A 5 by 7 bitmap font, drawn by hand. '#' is ink, '.' is empty. Only
-# the characters this front page needs are defined here.
-
-GLYPHS = {
-    'A': ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
-    'B': ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
-    'C': ("01111", "10000", "10000", "10000", "10000", "10000", "01111"),
-    'D': ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
-    'E': ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
-    'F': ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
-    'G': ("01111", "10000", "10000", "10111", "10001", "10001", "01110"),
-    'H': ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
-    'I': ("11111", "00100", "00100", "00100", "00100", "00100", "11111"),
-    'J': ("00111", "00010", "00010", "00010", "00010", "10010", "01100"),
-    'K': ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
-    'L': ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
-    'M': ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
-    'N': ("10001", "11001", "10101", "10011", "10001", "10001", "10001"),
-    'O': ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
-    'P': ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
-    'Q': ("01110", "10001", "10001", "10001", "10101", "10010", "01101"),
-    'R': ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
-    'S': ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
-    'T': ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
-    'U': ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
-    'V': ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
-    'W': ("10001", "10001", "10001", "10101", "10101", "11011", "10001"),
-    'X': ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
-    'Y': ("10001", "10001", "01010", "00100", "00100", "00100", "00100"),
-    'Z': ("11111", "00001", "00010", "00100", "01000", "10000", "11111"),
-    '0': ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
-    '1': ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
-    '2': ("01110", "10001", "00001", "00010", "00100", "01000", "11111"),
-    '3': ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
-    '4': ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
-    '5': ("11111", "10000", "11110", "00001", "00001", "10001", "01110"),
-    '6': ("01110", "10000", "10000", "11110", "10001", "10001", "01110"),
-    '7': ("11111", "00001", "00010", "00100", "00100", "00100", "00100"),
-    '8': ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
-    '9': ("01110", "10001", "10001", "01111", "00001", "00001", "01110"),
-    ' ': ("00000", "00000", "00000", "00000", "00000", "00000", "00000"),
-    '.': ("00000", "00000", "00000", "00000", "00000", "01100", "01100"),
-    ',': ("00000", "00000", "00000", "00000", "01100", "01100", "01000"),
-    "'": ("00100", "00100", "01000", "00000", "00000", "00000", "00000"),
-    '-': ("00000", "00000", "00000", "01110", "00000", "00000", "00000"),
-    ':': ("00000", "01100", "01100", "00000", "01100", "01100", "00000"),
-    ';': ("00000", "01100", "01100", "00000", "01100", "01100", "01000"),
-    '!': ("00100", "00100", "00100", "00100", "00100", "00000", "00100"),
-    '?': ("01110", "10001", "00001", "00010", "00100", "00000", "00100"),
-    '%': ("11001", "11010", "00100", "01000", "10011", "10011", "00000"),
-    '(': ("00010", "00100", "01000", "01000", "01000", "00100", "00010"),
-    ')': ("01000", "00100", "00010", "00010", "00010", "00100", "01000"),
-    '/': ("00001", "00001", "00010", "00100", "01000", "10000", "10000"),
-    '&': ("01100", "10010", "10100", "01000", "10101", "10010", "01101"),
-    '+': ("00000", "00100", "00100", "11111", "00100", "00100", "00000"),
-    '=': ("00000", "00000", "11111", "00000", "11111", "00000", "00000"),
-    '"': ("01010", "01010", "01010", "00000", "00000", "00000", "00000"),
-    '*': ("00000", "10101", "01110", "10101", "00000", "00000", "00000"),
-}
-
-GW = 5
-GH = 7
-
-
-def measure(text, scale):
-    """Pixel width of a string at a scale, one pixel gap per glyph."""
-    return len(text) * (GW * scale + scale) - scale
-
-
-def put_text(page, x, y, text, scale, colour, align="left"):
-    """Draw one line of text; align left, centre or right on x."""
-    width = measure(text, scale)
-    if align == "center":
-        x -= width // 2
-    elif align == "right":
-        x -= width
+def draw_text(canvas, x, y, text, scale, colour):
     cx = x
     for ch in text:
-        glyph = GLYPHS.get(ch, GLYPHS[' '])
-        for row in range(GH):
+        glyph = FONT.get(ch, FONT[" "])
+        for row in range(7):
             bits = glyph[row]
-            for col in range(GW):
-                if bits[col] == '1':
-                    page.rect(cx + col * scale, y + row * scale,
-                              scale, scale, colour)
-        cx += GW * scale + scale
-    return width
+            for col in range(5):
+                if bits[col] == "#":
+                    canvas.fill_rect(
+                        cx + col * scale, y + row * scale, scale, scale, colour
+                    )
+        cx += 6 * scale
 
 
-def flow(text, max_width, scale):
-    """Greedy word wrap; returns the lines that fit inside max_width."""
-    words = text.split(' ')
+def draw_text_centred(canvas, cx, y, text, scale, colour):
+    draw_text(canvas, cx - text_width(text, scale) // 2, y, text, scale, colour)
+
+
+def wrap_text(text, max_chars):
+    """Greedy word wrap into lines of at most max_chars characters."""
     lines = []
-    current = ''
-    for word in words:
-        trial = word if not current else current + ' ' + word
-        if measure(trial, scale) <= max_width:
-            current = trial
-        else:
-            if current:
+    for chunk in text.split("\n"):
+        words = chunk.split(" ")
+        current = ""
+        for word in words:
+            if not current:
+                current = word
+            elif len(current) + 1 + len(word) <= max_chars:
+                current += " " + word
+            else:
                 lines.append(current)
-            current = word
-    if current:
-        lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
     return lines
 
 
-# ------------------------------------------------------------ PNG writer
+# ---------------------------------------------------------------------------
+# PNG writer: raw RGB rows, filter byte 0 per row, zlib, CRC-checked chunks.
+# ---------------------------------------------------------------------------
 
-def _piece(kind, data):
-    out = struct.pack('>I', len(data)) + kind + data
-    out += struct.pack('>I', crc32(kind + data) & 0xFFFFFFFF)
+def _chunk(kind, data):
+    out = struct.pack(">I", len(data)) + kind + data
+    out += struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
     return out
 
 
-def png_bytes(page):
-    """Encode the page as a PNG: 8-bit RGB, one filter byte per row."""
+def write_png(canvas, path):
     raw = bytearray()
-    for y in range(page.h):
-        raw.append(0)  # filter: none
-        start = (y * page.w) * 3
-        raw += page.buf[start:start + page.w * 3]
-    ihdr = struct.pack('>IIBBBBB', page.w, page.h, 8, 2, 0, 0, 0)
-    png = b'\x89PNG\r\n\x1a\n'
-    png += _piece(b'IHDR', ihdr)
-    png += _piece(b'IDAT', zlib.compress(bytes(raw), 9))
-    png += _piece(b'IEND', b'')
-    return png
+    stride = canvas.width * 3
+    for y in range(canvas.height):
+        raw.append(0)
+        start = y * stride
+        raw += canvas.pixels[start:start + stride]
+    png = b"\x89PNG\r\n\x1a\n"
+    png += _chunk(
+        b"IHDR",
+        struct.pack(">IIBBBBB", canvas.width, canvas.height, 8, 2, 0, 0, 0),
+    )
+    png += _chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+    png += _chunk(b"IEND", b"")
+    with open(path, "wb") as fh:
+        fh.write(png)
 
 
-# ---------------------------------------------------------- illustrations
+# ---------------------------------------------------------------------------
+# Small drawn illustrations, one per story, along the bottom of each panel.
+# Each gets the panel's inner box (x, y, width, height) to draw inside.
+# ---------------------------------------------------------------------------
 
-def art_missile(page, x, y, w, h):
-    """A missile streaking down at an angle, bursting at its tip."""
-    page.segment(x + 12, y + 8, x + w // 2, y + h - 30, INK, 3)
-    page.segment(x + w // 2, y + h - 30, x + w // 2 - 14, y + h - 44, INK, 3)
-    page.segment(x + w // 2, y + h - 30, x + w // 2 + 14, y + h - 44, INK, 3)
-    bx, by = x + w // 2, y + h - 22
-    for dx, dy in ((0, -12), (10, -8), (13, 0), (10, 8), (0, 12),
-                   (-10, 8), (-13, 0), (-10, -8)):
-        page.segment(bx, by, bx + dx, by + dy, CRIMSON, 3)
-    page.blob(bx, by, 5, CRIMSON)
-    page.blob(x + w - 26, y + 12, 4, OCHRE)
-    page.blob(x + w - 46, y + 26, 3, OCHRE)
+SKY = (214, 230, 240)
+SEA = (52, 110, 150)
+DARK = (40, 40, 44)
+FLAME = (232, 120, 24)
+SMOKE = (120, 120, 118)
+LEAF = (46, 130, 80)
+GOLD = (214, 164, 32)
 
 
-def art_clock(page, x, y, w, h):
-    """A clock running past the hour: talks in overtime."""
-    cx, cy = x + w // 2 - 60, y + h // 2
-    r = h // 2 - 10
-    page.blob(cx, cy, r, SNOW)
-    page.halo(cx, cy, r, INK, 2)
-    page.blob(cx, cy, 3, INK)
-    page.segment(cx, cy, cx, cy - r + 8, INK, 3)
-    page.segment(cx, cy, cx + r - 12, cy + 6, INK, 3)
-    page.segment(cx - r + 6, cy - 6, cx - r + 14, cy - 6, CRIMSON, 2)
-    page.segment(cx + r - 14, cy + 6, cx + r - 6, cy + 6, CRIMSON, 2)
-    sx = x + w - 90
-    page.rect(sx, cy - 20, 30, 40, LEAF)
-    page.rect(sx + 34, cy - 20, 30, 40, SEAGREEN)
-    page.vrule(sx + 15, cy - 26, 6, FAINT, 2)
-    page.vrule(sx + 49, cy - 26, 6, FAINT, 2)
-    page.segment(sx - 8, cy + 28, sx + 72, cy - 32, CRIMSON, 4)
+def scene_missiles(cv, x, y, w, h):
+    cv.fill_rect(x, y, w, h, SKY)
+    cv.fill_rect(x, y + h - 22, w, 22, (96, 110, 96))
+    cv.disc(x + w - 52, y + 20, 13, GOLD)
+    for sx, sy, ln in ((x + 30, y + 14, 60), (x + 130, y + 8, 74), (x + 250, y + 18, 56)):
+        cv.line(sx, sy, sx + ln, sy + 26, FLAME)
+        cv.disc(sx + ln, sy + 26, 5, FLAME)
+        cv.disc(sx + ln + 4, sy + 30, 3, SMOKE)
+    cv.fill_rect(x + 40, y + h - 40, 26, 18, DARK)
+    cv.fill_rect(x + 44, y + h - 48, 18, 8, DARK)
 
 
-def art_table(page, x, y, w, h):
-    """Four flags on poles above a round negotiating table."""
-    cols = [DEEPBLUE, CRIMSON, OCHRE, LEAF]
-    for i, col in enumerate(cols):
-        px = x + 30 + i * (w - 60) // 3
-        page.vrule(px, y + 6, h - 40, INK, 3)
-        page.rect(px + 3, y + 6, 30, 18, col)
-        page.rect(px + 3, y + 24, 30, 3, SNOW)
-    page.hrule(x + 8, y + h - 26, w - 16, INK, 3)
-    page.rect(x + w // 2 - 30, y + h - 22, 60, 4, INK)
-    page.blob(x + w // 2, y + h - 14, 4, INK)
+def scene_climate(cv, x, y, w, h):
+    cv.fill_rect(x, y, w, h, (222, 238, 226))
+    cv.disc(x + w // 2, y + h // 2 + 4, 26, LEAF)
+    cv.fill_rect(x + w // 2 - 26, y + h // 2 - 4, 52, 8, (222, 238, 226))
+    cv.fill_rect(x + w // 2 - 4, y + h // 2 - 26, 8, 52, (222, 238, 226))
+    cv.disc(x + 46, y + 18, 12, GOLD)
+    for dx in (-8, 0, 8):
+        cv.line(x + w - 46 + dx, y + h - 12, x + w - 46 + dx, y + h - 34, LEAF)
+    cv.disc(x + w - 46, y + h - 40, 7, LEAF)
 
 
-def art_scales(page, x, y, w, h):
-    """Scales of justice: post, beam, two pans, base."""
-    cx = x + w // 2
-    page.vrule(cx, y + 6, h - 26, INK, 3)
-    page.hrule(x + 14, y + 12, w - 28, INK, 3)
-    page.blob(cx, y + 10, 4, INK)
-    for side in (-1, 1):
-        px = cx + side * (w // 2 - 20)
-        page.segment(px, y + 12, px - 16, y + 40, INK, 2)
-        page.segment(px, y + 12, px + 16, y + 40, INK, 2)
-        page.hrule(px - 16, y + 40, 32, INK, 2)
-        page.segment(px - 14, y + 40, px - 8, y + 52, INK, 2)
-        page.segment(px + 14, y + 40, px + 8, y + 52, INK, 2)
-        page.hrule(px - 8, y + 52, 16, INK, 2)
-    page.hrule(cx - 26, y + h - 16, 52, INK, 3)
-    page.hrule(cx - 34, y + h - 10, 68, INK, 3)
+def scene_talks(cv, x, y, w, h):
+    cv.fill_rect(x, y, w, h, (224, 230, 242))
+    cv.fill_rect(x + 30, y + h - 30, w - 60, 8, (120, 84, 50))
+    cv.fill_rect(x + 30, y + h - 38, w - 60, 8, (150, 108, 62))
+    for i, col in enumerate(((28, 64, 140), (158, 28, 28), (34, 120, 70))):
+        fx = x + 60 + i * 130
+        cv.fill_rect(fx, y + 12, 54, 34, col)
+        cv.fill_rect(fx, y + 12, 54, 6, (255, 255, 255))
+        cv.line(fx + 27, y + 12, fx + 27, y + h - 38, DARK)
+    cv.disc(x + w // 2, y + 22, 9, GOLD)
 
 
-def art_bridge(page, x, y, w, h):
-    """A bridge arc between two towers, stars above it."""
-    x0, x1 = x + 20, x + w - 20
-    base = y + h - 14
-    for i in range(25):
-        t = i / 24
-        px = int(x0 + (x1 - x0) * t)
-        py = int(base - 26 * (1 - (2 * t - 1) ** 2))
-        page.blob(px, py, 3, DEEPBLUE)
-    page.vrule(x + 26, base - 34, 34, INK, 3)
-    page.vrule(x + w - 29, base - 34, 34, INK, 3)
-    page.hrule(x + 8, base, w - 16, INK, 3)
-    for sx, sy in ((x + w // 2 - 70, y + 6), (x + w // 2, y + 2),
-                   (x + w // 2 + 70, y + 6)):
-        page.blob(sx, sy, 3, OCHRE)
-        page.segment(sx - 6, sy, sx + 6, sy, OCHRE, 2)
-        page.segment(sx, sy - 6, sx, sy + 6, OCHRE, 2)
+def scene_court(cv, x, y, w, h):
+    cv.fill_rect(x, y, w, h, (232, 228, 240))
+    cv.fill_rect(x + w // 2 - 3, y + 10, 6, h - 26, DARK)
+    cv.fill_rect(x + w // 2 - 40, y + h - 16, 80, 6, DARK)
+    cv.line(x + w // 2 - 70, y + 16, x + w // 2 - 70, y + 44, DARK)
+    cv.line(x + w // 2 + 70, y + 16, x + w // 2 + 70, y + 44, DARK)
+    cv.line(x + w // 2 - 70, y + 16, x + w // 2, y + 10, DARK)
+    cv.line(x + w // 2 + 70, y + 16, x + w // 2, y + 10, DARK)
+    cv.disc(x + w // 2 - 70, y + 48, 14, GOLD)
+    cv.disc(x + w // 2 + 70, y + 48, 14, GOLD)
+    cv.fill_rect(x + w // 2 - 84, y + 34, 28, 4, GOLD)
+    cv.fill_rect(x + w // 2 + 56, y + 34, 28, 4, GOLD)
 
 
-def art_tanker(page, x, y, w, h):
-    """An oil tanker with flames at its stack, on a wavy sea."""
-    cx = x + w // 2
-    page.rect(cx - 70, y + 26, 140, 24, EMBER)
-    page.rect(cx - 70, y + 26, 140, 4, INK)
-    page.rect(cx + 44, y + 6, 20, 20, INK)
-    page.rect(cx + 48, y + 10, 12, 12, SNOW)
-    bx, by = cx + 54, y + 2
-    for dx, dy in ((0, -10), (8, -6), (10, 2), (4, 8), (-4, 8),
-                   (-10, 2), (-8, -6)):
-        page.segment(bx, by, bx + dx, by + dy, CRIMSON, 3)
-    page.blob(bx, by, 4, CRIMSON)
-    page.hrule(x + 10, y + h - 18, w - 20, PALE, 3)
-    page.hrule(x + 30, y + h - 10, w - 60, PALE, 3)
-    page.blob(x + 24, y + 12, 4, OCHRE)
-    page.blob(x + w - 24, y + 20, 3, OCHRE)
+def scene_deal(cv, x, y, w, h):
+    cv.fill_rect(x, y, w, h, (222, 238, 236))
+    cv.fill_rect(x, y + h - 20, w, 20, (140, 170, 190))
+    # Arched bridge: deck, arch, and suspension ticks.
+    cv.fill_rect(x + 16, y + h - 34, w - 32, 6, DARK)
+    for i in range(9):
+        t = i / 8.0
+        bx = x + 24 + int(t * (w - 48))
+        arch_y = y + h - 34 - int(26 * (1 - (2 * t - 1) ** 2))
+        cv.line(bx, arch_y, bx, y + h - 34, DARK)
+    cv.disc(x + w // 2, y + 16, 10, GOLD)
+    for dx, dy in ((-46, 8), (46, 8), (-70, 26), (70, 26)):
+        cv.disc(x + w // 2 + dx, y + 26 + dy, 4, (28, 64, 140))
 
 
-ART = {
-    'missile': art_missile,
-    'clock': art_clock,
-    'table': art_table,
-    'scales': art_scales,
-    'bridge': art_bridge,
-    'tanker': art_tanker,
-}
+def scene_tanker(cv, x, y, w, h):
+    cv.fill_rect(x, y, w, h, (238, 226, 204))
+    cv.fill_rect(x, y + h - 30, w, 30, SEA)
+    cv.fill_rect(x + 40, y + h - 52, w - 120, 22, DARK)
+    cv.fill_rect(x + w - 110, y + h - 74, 30, 22, (200, 200, 200))
+    cv.line(x + w - 95, y + h - 74, x + w - 95, y + h - 96, DARK)
+    for fx, fy, fr in ((x + 90, y + h - 58, 12), (x + 130, y + h - 66, 9), (x + 160, y + h - 56, 7)):
+        cv.disc(fx, fy, fr, FLAME)
+        cv.disc(fx, fy - fr - 6, fr // 2, SMOKE)
+    cv.fill_rect(x + 20, y + h - 18, 60, 4, (255, 255, 255))
+    cv.fill_rect(x + w - 90, y + h - 12, 70, 4, (255, 255, 255))
 
 
-# ------------------------------------------------------------ the stories
+# ---------------------------------------------------------------------------
+# The six stories, written for Saturday 21 November 2026.
+# ---------------------------------------------------------------------------
 
-# kicker, kicker colour, headline, body, illustration key
 STORIES = [
-    ("WARSAW - WAR", CRIMSON,
-     "RUSSIAN MISSILES CRASH IN POLAND",
-     "Moscow fires 400 drones and 110 missiles at Ukraine. At least 8 "
-     "are killed, Kyiv bridges are hit. Warsaw calls it provocation.",
-     'missile'),
-    ("ANTALYA - CLIMATE", LEAF,
-     "COP31 TALKS STALL IN OVERTIME",
-     "The Antalya climate summit runs past its deadline with no deal. "
-     "The draft drops any call to phase out fossil fuels.",
-     'clock'),
-    ("WASHINGTON - DIPLOMACY", DEEPBLUE,
-     "PEACE TALKS EDGE FORWARD",
-     "US envoys say Moscow has agreed to a multilateral format with "
-     "Europe at the table. Zelenskyy presses for talks to start soon.",
-     'table'),
-    ("YANGON - JUSTICE", CRIMSON,
-     "MYANMAR REJECTS GENOCIDE RULING",
-     "Myanmar calls the world court verdict biased after the court "
-     "found it committed genocide against the Rohingya.",
-     'scales'),
-    ("LONDON - EUROPE", SEAGREEN,
-     "UK AND EU STRIKE LANDMARK DEAL",
-     "Britain and the EU agree youth mobility, farm trade and carbon "
-     "market deals in a landmark post-Brexit reset.",
-     'bridge'),
-    ("HORMUZ - ENERGY", EMBER,
-     "TANKER STRUCK IN STRAIT OF HORMUZ",
-     "A tanker is hit and left burning in the Strait of Hormuz, the "
-     "world's busiest oil chokepoint. No crew are reported hurt.",
-     'tanker'),
+    {
+        "kicker": "WARSAW / WAR",
+        "colour": (158, 28, 28),
+        "headline": "MISSILES CRASH IN POLAND AS RUSSIA POUNDS UKRAINE",
+        "body": "TWO RUSSIAN MISSILES AND A DRONE CAME DOWN IN SOUTH-EAST POLAND "
+                "DURING A HUGE OVERNIGHT BARRAGE ON UKRAINE. MORE THAN 400 DRONES "
+                "AND 110 MISSILES WERE FIRED, AT LEAST EIGHT PEOPLE WERE KILLED, "
+                "AND POWER WAS CUT IN ELEVEN REGIONS. WARSAW CALLED IT A DELIBERATE "
+                "PROVOCATION, AND NATO CHIEF MARK RUTTE HEADS TO WARSAW TODAY.",
+        "scene": scene_missiles,
+    },
+    {
+        "kicker": "ANTALYA / CLIMATE",
+        "colour": (34, 120, 70),
+        "headline": "CLIMATE TALKS STALL IN ANTALYA AS FOSSIL FUELS VANISH FROM DRAFT",
+        "body": "THE COP31 CLIMATE TALKS IN ANTALYA HAVE SLIPPED INTO OVERTIME WITH "
+                "NO DEAL IN SIGHT. THE LATEST DRAFT MAKES NO MENTION OF FOSSIL "
+                "FUELS AT ALL, AND NEGOTIATORS FROM NEARLY 200 COUNTRIES REMAIN "
+                "DEADLOCKED. A NEW TEXT IS PROMISED FOR SATURDAY MORNING.",
+        "scene": scene_climate,
+    },
+    {
+        "kicker": "WASHINGTON / DIPLOMACY",
+        "colour": (28, 64, 140),
+        "headline": "PEACE TALKS EDGE FORWARD AS MOSCOW AGREES TO A WIDER TABLE",
+        "body": "UNITED STATES ENVOYS SAY TALKS TO END THE WAR IN UKRAINE ARE "
+                "EDGING FORWARD. MOSCOW HAS AGREED TO A MULTILATERAL FORMAT WITH "
+                "EUROPE AT THE TABLE, AND PRESIDENT ZELENSKYY IS PRESSING FOR "
+                "NEGOTIATIONS TO START SOON.",
+        "scene": scene_talks,
+    },
+    {
+        "kicker": "YANGON / JUSTICE",
+        "colour": (96, 50, 140),
+        "headline": "MYANMAR REJECTS WORLD COURT GENOCIDE RULING AS UNFAIR",
+        "body": "MYANMAR HAS REJECTED THE WORLD COURT RULING THAT FOUND IT "
+                "RESPONSIBLE FOR GENOCIDE AGAINST THE ROHINGYA, CALLING THE "
+                "DECISION UNFAIR. THE COURT RULED BY NINE VOTES TO SIX OVER THE "
+                "2017 CRACKDOWN IN RAKHINE STATE.",
+        "scene": scene_court,
+    },
+    {
+        "kicker": "LONDON / EUROPE",
+        "colour": (14, 110, 120),
+        "headline": "UK AND EU SEAL LANDMARK POST-BREXIT RESET DEAL",
+        "body": "BRITAIN AND THE EUROPEAN UNION HAVE STRUCK A LANDMARK POST-BREXIT "
+                "DEAL AT A SUMMIT IN BRUSSELS. IT OPENS YOUTH MOBILITY FOR 100,000 "
+                "YOUNG PEOPLE, EASES FARM TRADE, AND LINKS THE TWO CARBON MARKETS.",
+        "scene": scene_deal,
+    },
+    {
+        "kicker": "HORMUZ / ENERGY",
+        "colour": (176, 84, 16),
+        "headline": "TANKER STRUCK AND LEFT BURNING IN THE STRAIT OF HORMUZ",
+        "body": "A TANKER WAS STRUCK BY A PROJECTILE AND CAUGHT FIRE WHILE SAILING "
+                "THROUGH THE STRAIT OF HORMUZ, THE WORLD'S BUSIEST OIL CHOKEPOINT. "
+                "NO CASUALTIES WERE REPORTED, BUT THE ATTACK ADDS TO A WAVE OF "
+                "STRIKES ON SHIPPING IN THE WATERWAY.",
+        "scene": scene_tanker,
+    },
 ]
 
 
-# ------------------------------------------------------------------ layout
+# ---------------------------------------------------------------------------
+# Page layout.
+# ---------------------------------------------------------------------------
 
-MARGIN = 24
-PW = 472
-PH = 268
-GAP = 16
-TOP = 152
-
-
-def masthead(page):
-    page.hrule(MARGIN, 22, W - 2 * MARGIN, INK, 2)
-    put_text(page, W // 2, 38, "THE WORLD IN ONE IMAGE", 7, INK,
-             align="center")
-    put_text(page, W // 2, 100, "SATURDAY 21 NOVEMBER 2026", 3, CRIMSON,
-             align="center")
-    put_text(page, W // 2, 126, "SIX STORIES FROM AROUND THE WORLD",
-             2, FAINT, align="center")
-    page.hrule(MARGIN, 146, W - 2 * MARGIN, INK, 4)
-
-
-def panel(page, story, px, py):
-    kicker, colour, headline, body, art = story
-    page.rect(px, py, PW, PH, CARD)
-    page.frame(px, py, PW, PH, INK, 2)
+def draw_panel(cv, story, px, py, pw, ph):
+    cv.fill_rect(px, py, pw, ph, PANEL)
+    cv.frame_rect(px, py, pw, ph, RULE, 2)
     # Kicker band.
-    page.rect(px + 2, py + 2, PW - 4, 28, colour)
-    put_text(page, px + 14, py + 10, kicker, 2, SNOW)
-    # Headline, wrapped to two lines at most.
-    inner = PW - 28
-    lines = flow(headline, inner, 3)
-    hy = py + 44
-    for line in lines[:2]:
-        put_text(page, px + 14, hy, line, 3, INK)
-        hy += 24
-    # Body copy (the font is capitals only, so the copy is set in caps).
-    by = hy + 6
-    for line in flow(body.upper(), inner, 2)[:4]:
-        put_text(page, px + 14, by, line, 2, INK)
-        by += 17
-    # Illustration strip along the bottom of the panel.
-    art_top = py + PH - 78
-    page.hrule(px + 14, art_top - 8, PW - 28, FAINT, 1)
-    ART[art](page, px + 14, art_top, PW - 28, 70)
+    cv.fill_rect(px + 2, py + 2, pw - 4, 30, story["colour"])
+    draw_text(cv, px + 14, py + 10, story["kicker"], 2, (255, 255, 255))
+    # Headline, two lines at scale 2.
+    inner_w = pw - 28
+    head_lines = wrap_text(story["headline"], inner_w // 12)
+    hy = py + 42
+    for line in head_lines[:2]:
+        draw_text(cv, px + 14, hy, line, 2, INK)
+        hy += 17
+    cv.fill_rect(px + 14, hy + 2, inner_w, 2, story["colour"])
+    # Body at scale 1.
+    body_lines = wrap_text(story["body"], inner_w // 6)
+    by = hy + 12
+    for line in body_lines[:6]:
+        draw_text(cv, px + 14, by, line, 1, INK)
+        by += 10
+    # Illustration along the bottom, taller so panels feel full.
+    ix = px + 14
+    iy = py + ph - 100
+    iw = pw - 28
+    ih = 86
+    story["scene"](cv, ix, iy, iw, ih)
+    cv.frame_rect(ix, iy, iw, ih, RULE, 1)
 
 
-def footer(page):
-    page.hrule(MARGIN, 994, W - 2 * MARGIN, INK, 2)
-    put_text(page, W // 2, 1000,
-             "THE WORLD IN ONE IMAGE - SATURDAY 21 NOVEMBER 2026",
-             1, FAINT, align="center")
-
-
-def build():
-    page = Canvas(W, H, NEWSprint)
-    page.frame(8, 8, W - 16, H - 16, INK, 2)
-    masthead(page)
+def draw_page():
+    cv = Canvas(WIDTH, HEIGHT, PAPER)
+    # Masthead.
+    draw_text_centred(cv, WIDTH // 2, 30, "THE WORLD IN ONE IMAGE", 5, INK)
+    cv.fill_rect(24, 74, WIDTH - 48, 3, RED)
+    draw_text_centred(cv, WIDTH // 2, 86, "SATURDAY 21 NOVEMBER 2026", 2, RED)
+    draw_text_centred(
+        cv, WIDTH // 2, 112, "SIX STORIES THAT SHAPED THE WORLD TODAY", 1, INK
+    )
+    cv.fill_rect(24, 128, WIDTH - 48, 3, RULE)
+    cv.fill_rect(24, 134, WIDTH - 48, 1, RULE)
+    # Story grid: 2 columns x 3 rows.
+    grid_x, grid_y = 24, 146
+    gap = 10
+    pw = (WIDTH - 2 * grid_x - gap) // 2
+    ph = (968 - grid_y - 2 * gap) // 3
     for i, story in enumerate(STORIES):
         col = i % 2
         row = i // 2
-        px = MARGIN + col * (PW + GAP)
-        py = TOP + row * (PH + GAP)
-        panel(page, story, px, py)
-    footer(page)
-    return page
+        px = grid_x + col * (pw + gap)
+        py = grid_y + row * (ph + gap)
+        draw_panel(cv, story, px, py, pw, ph)
+    # Footer.
+    cv.fill_rect(24, 978, WIDTH - 48, 2, RULE)
+    draw_text_centred(
+        cv,
+        WIDTH // 2,
+        988,
+        "THE WORLD IN ONE IMAGE - SATURDAY 21 NOVEMBER 2026 - SIX STORIES, ONE PAGE",
+        1,
+        INK,
+    )
+    return cv
 
 
 def main():
-    out_dir = os.environ.get('MAKEFUN_OUTPUT_DIR', '/output')
+    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
     os.makedirs(out_dir, exist_ok=True)
-    data = png_bytes(build())
-    path = os.path.join(out_dir, 'entry.png')
-    with open(path, 'wb') as f:
-        f.write(data)
-    print(f"wrote {path} ({len(data)} bytes)")
+    page = draw_page()
+    write_png(page, os.path.join(out_dir, "entry.png"))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
